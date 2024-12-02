@@ -1,0 +1,255 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+import sqlite3
+from matplotlib import pyplot as plt
+import pandas as pd
+# Database setup
+DB_NAME = "finance_tracker.db"
+
+def init_db():
+    """Initialize the SQLite database and create a table if it doesn't exist."""
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            category TEXT NOT NULL,
+            amount REAL NOT NULL
+    )
+""")
+    connection.commit()
+    connection.close()
+
+init_db()
+
+# Functions
+def add_transaction():
+    """Add a transaction to the database."""
+    date = date_entry.get()
+    description = description_entry.get()
+    category = category_combo.get()
+    amount = amount_entry.get()
+
+    if not date or not description or not category or not amount:
+        messagebox.showwarning("Input Error", "All fields are required!")
+        return
+
+    try:
+        amount = float(amount)
+        connection = sqlite3.connect(DB_NAME)
+        cursor = connection.cursor()
+        cursor.execute(
+            "INSERT INTO transactions (date, description, category, amount) VALUES (?, ?, ?, ?)",
+             (date, description, category, amount),
+        )
+        connection.commit()
+        connection.close()
+        update_table()
+        messagebox.showinfo("Success", "Transaction added successfully!")
+        clear_inputs()
+    except ValueError:
+        messagebox.showerror("Input Error", "Amount must be a valid number!")
+
+def fetch_data():
+    """Fetch all transactions from the database."""
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("SELECT id, date, description, category, amount FROM transactions")
+    rows = cursor.fetchall()
+    connection.close()
+    return rows
+
+
+def update_table():
+    """Update the table with current data from the database."""
+    for row in table.get_children():
+        table.delete(row)
+
+    rows = fetch_data()
+    for row in rows:
+        table.insert("", tk.END, values=row)
+
+def clear_inputs():
+    """Clear input fields."""
+    date_entry.delete(0, tk.END)
+    description_entry.delete(0, tk.END)
+    amount_entry.delete(0, tk.END)
+    category_combo.set("")
+
+def delete_transaction():
+    """Delete the selected transaction from the database."""
+    selected_item = table.selection()
+    if not selected_item:
+        messagebox.showwarning("Selection Error", "No transaction selected!")
+        return
+
+    item = table.item(selected_item)
+    transaction_id = item["values"][0]  # Get the ID of the selected transaction
+
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+    connection.commit()
+    connection.close()
+
+    update_table()
+    messagebox.showinfo("Success", "Transaction deleted successfully!")
+def calculate_monthly_savings():
+    """Calculate and display monthly savings or overspending."""
+    monthly_limit = 12000  # Set the monthly limit
+
+    # Connect to the database and fetch data
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("SELECT strftime('%Y-%m', date) AS month, SUM(amount) FROM transactions GROUP BY month")
+    month_expenses = cursor.fetchall()
+    connection.close()
+
+    if not month_expenses:
+        messagebox.showinfo("Savings Summary", "No transactions to calculate savings.")
+        return
+
+    summary_text = "Monthly Savings Summary:\n\n"
+    for month, total_spent in month_expenses:
+        savings = monthly_limit - total_spent
+        if savings >= 0:
+            summary_text += f"{month}: Savings ₹{savings:.2f}\n"
+        else:
+            summary_text += f"{month}: Overspent by ₹{-savings:.2f}\n"
+
+    # Display the summary
+    messagebox.showinfo("Savings Summary", summary_text)
+
+def summarize_expenses():
+    """Show expense summaries."""
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+
+    cursor.execute("SELECT category, SUM(amount) FROM transactions GROUP BY category")
+    category_summary = cursor.fetchall()
+
+    cursor.execute("SELECT strftime('%Y-%m', date) AS month, SUM(amount) FROM transactions GROUP BY month")
+    month_summary = cursor.fetchall()
+    connection.close()
+
+    if not category_summary and not month_summary:
+        messagebox.showinfo("Summary", "No transactions to summarize.")
+        return
+
+    summary_text = "Expenses by Category:\n"
+    for category, amount in category_summary:
+        summary_text += f"{category}: ₹{amount:.2f}\n"
+
+    summary_text += "\nExpenses by Month:\n"
+    for month, amount in month_summary:
+        summary_text += f"{month}: ₹{amount:.2f}\n"
+
+    messagebox.showinfo("Expense Summary", summary_text)
+
+def visualize_monthly_expenses():
+    """Visualize expenses for the selected month."""
+    selected_month = month_combo.get()
+    if not selected_month:
+        messagebox.showwarning("Input Error", "Please select a month!")
+        return
+
+    # Map month names to month numbers
+    month_mapping = {
+        "January": "01", "February": "02", "March": "03", "April": "04", "May": "05", "June": "06",
+        "July": "07", "August": "08", "September": "09", "October": "10", "November": "11", "December": "12"
+    }
+    month_number = month_mapping.get(selected_month)
+
+    # Query database for transactions in the selected month
+    connection = sqlite3.connect(DB_NAME)
+    cursor = connection.cursor()
+    cursor.execute("""
+        SELECT category, SUM(amount) 
+        FROM transactions 
+        WHERE strftime('%m', date) = ?
+        GROUP BY category
+    """, (month_number,))
+    category_summary = cursor.fetchall()
+    connection.close()
+
+    if not category_summary:
+        messagebox.showinfo("Visualization", f"No transactions found for {selected_month}.")
+        return
+
+    # Generate Pie Chart
+    categories = [row[0] for row in category_summary]
+    amounts = [row[1] for row in category_summary]
+    plt.figure(figsize=(8, 6))
+    plt.pie(amounts, labels=categories, autopct="%1.1f%%", startangle=90)
+    plt.title(f"Expenses by Category - {selected_month}")
+    plt.show()
+
+
+# GUI Setup
+root = tk.Tk()
+root.title("Student Finance Tracker")
+root.geometry("800x600")
+
+# Input Section
+input_frame = tk.Frame(root, padx=10, pady=10)
+input_frame.pack(fill="x")
+
+tk.Label(input_frame, text="Date (YYYY-MM-DD):").grid(row=0, column=0, sticky="w")
+date_entry = tk.Entry(input_frame, width=15)
+date_entry.grid(row=0, column=1, padx=5)
+
+tk.Label(input_frame, text="Description:").grid(row=0, column=2, sticky="w")
+description_entry = tk.Entry(input_frame, width=20)
+description_entry.grid(row=0, column=3, padx=5)
+
+tk.Label(input_frame, text="Category:").grid(row=1, column=0, sticky="w")
+category_combo = ttk.Combobox(input_frame, values=["Food", "Rent", "Travel", "Studies", "Other"], state="readonly", width=15)
+category_combo.grid(row=1, column=1, padx=5)
+
+tk.Label(input_frame, text="Amount:").grid(row=1, column=2, sticky="w")
+amount_entry = tk.Entry(input_frame, width=20)
+amount_entry.grid(row=1, column=3, padx=5)
+
+tk.Button(input_frame, text="Add Transaction", command=add_transaction, bg="green", fg="white").grid(row=2, column=0, columnspan=4, pady=10)
+# Table Section
+table_frame = tk.Frame(root)
+table_frame.pack(fill="both", expand=True)
+
+# Month Selection Section
+month_frame = tk.Frame(root, padx=10, pady=10)
+month_frame.pack(fill="x")
+
+tk.Label(month_frame, text="Select Month:").grid(row=0, column=0, sticky="w")
+month_combo = ttk.Combobox(month_frame, values=[
+    "January", "February", "March", "April", "May", "June", 
+    "July", "August", "September", "October", "November", "December"], 
+    state="readonly", width=15)
+month_combo.grid(row=0, column=1, padx=5)
+
+tk.Button(month_frame, text="Visualize Selected Month", command=visualize_monthly_expenses).grid(row=0, column=2, padx=5)
+
+columns = ("ID", "Date", "Description", "Category", "Amount")
+table = ttk.Treeview(table_frame, columns=columns, show="headings", height=15)
+for col in columns:
+    table.heading(col, text=col)
+    table.column(col, anchor="w", width=100)  # Adjust width to fit data
+
+table.pack(fill="both", expand=True, padx=10, pady=10)
+
+# Button Section
+button_frame = tk.Frame(root, padx=10, pady=10)
+button_frame.pack(fill="x")
+
+tk.Button(button_frame, text="Delete Transaction", command=delete_transaction, bg="red", fg="white").pack(side="left", padx=5)
+tk.Button(button_frame, text="Summarize Expenses", command=summarize_expenses).pack(side="left", padx=5)
+tk.Button(button_frame, text="Visualize Expenses", command=visualize_expenses).pack(side="left", padx=5)
+tk.Button(button_frame, text="Calculate Savings", command=calculate_monthly_savings, bg="blue", fg="white").pack(side="left", padx=5)
+
+
+# Load initial data into table
+update_table()
+
+# Run the app
+root.mainloop()
